@@ -19,47 +19,23 @@ A Model Context Protocol (MCP) server that provides tools for interacting with C
 
 ## Setup
 
-### Option 1: Using Docker (Recommended)
-
-The easiest way to use this server is with the pre-built Docker image:
-
-```bash
-docker run --rm -i \
-  -e CONFLUENCE_API_TOKEN=your-api-token \
-  -e CONFLUENCE_EMAIL=your-email@domain.com \
-  -e CONFLUENCE_DOMAIN=your-domain.atlassian.net \
-  ghcr.io/aaronsb/confluence-cloud-mcp:latest
-```
-
-### Option 2: Building Locally
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/aaronsb/confluence-cloud-mcp.git
+git clone https://github.com/akedia/confluence-context-mcp-datacenter.git
 cd confluence-cloud-mcp
 ```
 
-2. Build and run using the local build script:
-```bash
-# Build the Docker image
-./scripts/build-local.sh
-
-# Run the server
-CONFLUENCE_API_TOKEN=your-token CONFLUENCE_EMAIL=your-email ./scripts/run-local.sh
-```
-
-### Option 3: From Source
-
-1. Install dependencies:
+2. Install dependencies:
 ```bash
 npm install
 ```
 
-2. Configure environment variables:
+3. Configure environment variables:
 Create a `.env` file with your Confluence credentials:
 ```
 CONFLUENCE_DOMAIN=your-domain.atlassian.net
-CONFLUENCE_EMAIL=your-email@domain.com
+CONFLUENCE_EMAIL=your-name
 CONFLUENCE_API_TOKEN=your-api-token
 ```
 
@@ -73,27 +49,6 @@ npm run build
 node build/index.js
 ```
 
-## Usage
-
-The server can be integrated with MCP-compatible AI assistants by adding it to their MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "confluence": {
-      "command": "docker",
-      "args": ["run", "--rm", "-i", "ghcr.io/aaronsb/confluence-cloud-mcp:latest"],
-      "env": {
-        "CONFLUENCE_DOMAIN": "your-domain.atlassian.net",
-        "CONFLUENCE_EMAIL": "your-email@domain.com",
-        "CONFLUENCE_API_TOKEN": "your-api-token"
-      },
-      "disabled": false,
-      "autoApprove": []
-    }
-  }
-}
-```
 
 > **Note for AI Assistants**: If you're an AI assistant like Cline trying to install this MCP server, please refer to the [llms-install.md](llms-install.md) file for detailed installation instructions.
 
