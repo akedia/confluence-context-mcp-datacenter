@@ -12,32 +12,19 @@ import type {
 } from '../types/index.js';
 
 export class ConfluenceClient {
-  private v2Client: AxiosInstance;
-  private v1Client: AxiosInstance;
+  private client: AxiosInstance;
   private domain: string;
   private baseURL: string;
-  private v2Path: string;
+  private apiPath: string;
 
   constructor(config: ConfluenceConfig) {
     this.domain = config.domain;
-    this.baseURL = `https://${config.domain}/wiki`;
-    this.v2Path = '/api/v2';
-    const v1Path = '/rest/api';
+    this.baseURL = `https://${config.domain}`;
+    this.apiPath = '/rest/api';
     
-    // V2 API client for most operations
-    this.v2Client = axios.create({
-      baseURL: this.baseURL + this.v2Path,
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Authorization': `Basic ${Buffer.from(`${config.email}:${config.apiToken}`).toString('base64')}`,
-        'X-Atlassian-Token': 'no-check'
-      }
-    });
-
-    // V1 API client specifically for content
-    this.v1Client = axios.create({
-      baseURL: this.baseURL + v1Path,
+    // Confluence Data Center API client
+    this.client = axios.create({
+      baseURL: this.baseURL + this.apiPath,
       headers: {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
@@ -47,14 +34,14 @@ export class ConfluenceClient {
     });
 
     // Log configuration for debugging
-    console.error('Confluence client configured with domain:', config.domain);
+    console.error('Confluence Data Center client configured with domain:', config.domain);
   }
 
   // Verify connection to Confluence API - throws error if verification fails
   async verifyApiConnection(): Promise<void> {
     try {
       // Make a simple API call that should work with minimal permissions
-      await this.v2Client.get('/spaces', { params: { limit: 1 } });
+      await this.client.get('/space', { params: { limit: 1 } });
       process.stderr.write('Successfully connected to Confluence API\n');
     } catch (error) {
       let errorMessage = 'Failed to connect to Confluence API';
@@ -90,45 +77,91 @@ export class ConfluenceClient {
 
   // Space operations
   async getConfluenceSpaces(limit = 25, start = 0): Promise<PaginatedResponse<Space>> {
-    const response = await this.v2Client.get('/spaces', {
+    const response = await this.client.get('/space', {
       params: { limit, start }
     });
-    return response.data;
+    
+    // Transform response to match expected format
+    return {
+      results: response.data.results,
+      _links: response.data._links,
+      size: response.data.size
+    };
   }
 
-  async getConfluenceSpace(spaceId: string): Promise<Space> {
-    const response = await this.v2Client.get(`/spaces/${spaceId}`);
-    return response.data;
+  async getConfluenceSpace(spaceKey: string): Promise<Space> {
+    const response = await this.client.get(`/space/${spaceKey}`);
+    // Transform Data Center response to expected format
+    return {
+      id: response.data.id,
+      key: response.data.key,
+      name: response.data.name,
+      type: response.data.type,
+      status: response.data.status,
+      _links: response.data._links
+    };
   }
 
   // Page operations
-  async getConfluencePages(spaceId: string, limit = 25, start = 0, title?: string): Promise<PaginatedResponse<Page>> {
-    const response = await this.v2Client.get('/pages', {
+  async getConfluencePages(spaceKey: string, limit = 25, start = 0, title?: string): Promise<PaginatedResponse<Page>> {
+    const cql = [`space = "${spaceKey}"`, `type = "page"`];
+    if (title) {
+      cql.push(`title ~ "${title}"`);
+    }
+    
+    const response = await this.client.get('/content/search', {
       params: {
-        spaceId,
+        cql: cql.join(' AND '),
         limit,
         start,
-        status: 'current',
-        ...(title && { title })
+        expand: 'space,version,body.storage'
       }
     });
-    return response.data;
+    
+    // Transform Data Center response to expected format
+    return {
+      results: response.data.results.map((page: any) => ({
+        id: page.id,
+        title: page.title,
+        status: page.status,
+        spaceId: page.space?.id,
+        _links: page._links,
+        version: page.version,
+        body: page.body,
+        authorId: page.history?.createdBy?.accountId || 'unknown',
+        createdAt: page.history?.createdDate || new Date().toISOString()
+      })),
+      _links: response.data._links,
+      size: response.data.size
+    };
   }
 
-  async searchPageByName(title: string, spaceId?: string): Promise<Page[]> {
+  async searchPageByName(title: string, spaceKey?: string): Promise<Page[]> {
     try {
-      const params: any = {
-        title,
-        status: 'current',
-        limit: 10 // Reasonable limit for multiple matches
-      };
-      
-      if (spaceId) {
-        params.spaceId = spaceId;
+      const cql = [`title ~ "${title}"`, `type = "page"`];
+      if (spaceKey) {
+        cql.push(`space = "${spaceKey}"`);
       }
-
-      const response = await this.v2Client.get('/pages', { params });
-      return response.data.results;
+      
+      const response = await this.client.get('/content/search', {
+        params: {
+          cql: cql.join(' AND '),
+          limit: 10,
+          expand: 'space,version'
+        }
+      });
+      
+      // Transform Data Center response format
+      return response.data.results.map((page: any) => ({
+        id: page.id,
+        title: page.title,
+        status: page.status,
+        spaceId: page.space?.id,
+        _links: page._links,
+        version: page.version,
+        authorId: page.history?.createdBy?.accountId || 'unknown',
+        createdAt: page.history?.createdDate || new Date().toISOString()
+      }));
     } catch (error) {
       if (axios.isAxiosError(error)) {
         console.error('Error searching for page:', error.message);
@@ -143,10 +176,9 @@ export class ConfluenceClient {
 
   async getPageContent(pageId: string): Promise<string> {
     try {
-      console.error(`Fetching content for page ${pageId} using v1 API`);
+      console.error(`Fetching content for page ${pageId}`);
       
-      // Use v1 API to get content, which reliably returns body content
-      const response = await this.v1Client.get(`/content/${pageId}`, {
+      const response = await this.client.get(`/content/${pageId}`, {
         params: {
           expand: 'body.storage'
         }
@@ -187,29 +219,27 @@ export class ConfluenceClient {
 
   async getConfluencePage(pageId: string): Promise<Page> {
     try {
-      // Get page metadata
-      const pageResponse = await this.v2Client.get(`/pages/${pageId}`);
-      const page = pageResponse.data;
-
-      try {
-        // Get page content
-        const content = await this.getPageContent(pageId);
-        return {
-          ...page,
-          body: {
-            storage: {
-              value: content,
-              representation: 'storage'
-            }
-          }
-        };
-      } catch (contentError) {
-        if (contentError instanceof ConfluenceError && 
-            contentError.code === 'EMPTY_CONTENT') {
-          return page; // Return metadata only for empty pages
+      // Get page with content
+      const response = await this.client.get(`/content/${pageId}`, {
+        params: {
+          expand: 'space,version,body.storage'
         }
-        throw contentError;
-      }
+      });
+      
+      const page = response.data;
+      
+      // Transform Data Center response to expected format
+      return {
+        id: page.id,
+        title: page.title,
+        status: page.status,
+        spaceId: page.space?.id,
+        _links: page._links,
+        version: page.version,
+        body: page.body,
+        authorId: page.history?.createdBy?.accountId || 'unknown',
+        createdAt: page.history?.createdDate || new Date().toISOString()
+      };
     } catch (error) {
       if (axios.isAxiosError(error)) {
         console.error('Error fetching page:', error.message);
@@ -220,32 +250,54 @@ export class ConfluenceClient {
     }
   }
 
-  // Removing duplicate method since it's redundant with getConfluencePage
-
-  async createConfluencePage(spaceId: string, title: string, content: string, parentId?: string): Promise<Page> {
+  async createConfluencePage(spaceKey: string, title: string, content: string, parentId?: string): Promise<Page> {
     const body = {
-      spaceId,
-      status: 'current',
+      type: 'page',
       title,
-      body: {
-        representation: 'storage',
-        value: content
+      space: {
+        key: spaceKey
       },
-      ...(parentId && { parentId })
+      body: {
+        storage: {
+          value: content,
+          representation: 'storage'
+        }
+      },
+      ...(parentId && { 
+        ancestors: [{ 
+          id: parentId 
+        }]
+      })
     };
 
-    const response = await this.v2Client.post('/pages', body);
-    return response.data;
+    const response = await this.client.post('/content', body);
+    
+    // Transform Data Center response to expected format
+    const page = response.data;
+    return {
+      id: page.id,
+      title: page.title,
+      status: page.status,
+      spaceId: page.space?.id,
+      _links: page._links,
+      version: page.version,
+      authorId: page.history?.createdBy?.accountId || 'unknown',
+      createdAt: page.history?.createdDate || new Date().toISOString()
+    };
   }
 
   async updateConfluencePage(pageId: string, title: string, content: string, version: number): Promise<Page> {
+    // First get the current page to ensure we have all required fields
+    const currentPage = await this.client.get(`/content/${pageId}`);
+    
     const body = {
-      id: pageId,
-      status: 'current',
+      type: 'page',
       title,
       body: {
-        representation: 'storage',
-        value: content
+        storage: {
+          value: content,
+          representation: 'storage'
+        }
       },
       version: {
         number: version + 1,
@@ -253,8 +305,20 @@ export class ConfluenceClient {
       }
     };
 
-    const response = await this.v2Client.put(`/pages/${pageId}`, body);
-    return response.data;
+    const response = await this.client.put(`/content/${pageId}`, body);
+    
+    // Transform Data Center response to expected format
+    const page = response.data;
+    return {
+      id: page.id,
+      title: page.title,
+      status: page.status,
+      spaceId: page.space?.id,
+      _links: page._links,
+      version: page.version,
+      authorId: page.history?.createdBy?.accountId || 'unknown',
+      createdAt: page.history?.createdDate || new Date().toISOString()
+    };
   }
 
   // Search operations
@@ -262,13 +326,12 @@ export class ConfluenceClient {
     try {
       console.error('Searching Confluence with CQL:', query);
       
-      // Use the v1 search endpoint with CQL
-      const response = await this.v1Client.get('/search', {
+      const response = await this.client.get('/content/search', {
         params: {
           cql: query.includes('type =') ? query : `text ~ "${query}"`,
           limit,
           start,
-          expand: 'content.space,content.version,content.body.view.value'
+          expand: 'space,version,body.view'
         }
       });
 
@@ -277,20 +340,20 @@ export class ConfluenceClient {
       return {
         results: (response.data.results || []).map((result: any) => ({
           content: {
-            id: result.content.id,
-            type: result.content.type,
-            status: result.content.status,
-            title: result.content.title,
-            spaceId: result.content.space?.id,
-            _links: result.content._links
+            id: result.id,
+            type: result.type,
+            status: result.status,
+            title: result.title,
+            spaceId: result.space?.id,
+            _links: result._links
           },
-          url: `https://${this.domain}/wiki${result.content._links?.webui || ''}`,
-          lastModified: result.content.version?.when,
+          url: `https://${this.domain}/wiki${result._links?.webui || ''}`,
+          lastModified: result.version?.when,
           excerpt: result.excerpt || ''
         })),
         _links: {
           next: response.data._links?.next,
-          base: this.baseURL + '/rest/api'
+          base: this.baseURL + this.apiPath
         }
       };
     } catch (error) {
@@ -307,46 +370,49 @@ export class ConfluenceClient {
 
   // Labels operations
   async getConfluenceLabels(pageId: string): Promise<PaginatedResponse<Label>> {
-    const response = await this.v2Client.get(`/pages/${pageId}/labels`);
-    return response.data;
+    const response = await this.client.get(`/content/${pageId}/label`);
+    return {
+      results: response.data.results,
+      _links: response.data._links,
+      size: response.data.size
+    };
   }
 
   async addConfluenceLabel(pageId: string, label: string): Promise<Label> {
     try {
-      const response = await this.v2Client.post(`/pages/${pageId}/labels`, {
+      console.error(`Adding label ${label} to page ${pageId}`);
+      
+      // Data Center API requires an array of labels
+      const response = await this.client.post(`/content/${pageId}/label`, [{
+        prefix: 'global',
         name: label
-      });
-      return response.data;
+      }]);
+      
+      // Return the first label from the response
+      return response.data.results[0];
     } catch (error) {
       if (axios.isAxiosError(error)) {
-        switch (error.response?.status) {
-          case 400:
-            throw new ConfluenceError(
-              'Invalid label format or label already exists',
-              'INVALID_LABEL'
-            );
-          case 403:
-            throw new ConfluenceError(
-              'Insufficient permissions to add labels',
-              'PERMISSION_DENIED'
-            );
-          case 404:
-            throw new ConfluenceError(
-              'Page not found',
-              'PAGE_NOT_FOUND'
-            );
-          case 409:
-            throw new ConfluenceError(
-              'Label already exists on this page',
-              'LABEL_EXISTS'
-            );
-          default:
-            console.error('Error adding label:', error.response?.data);
-            throw new ConfluenceError(
-              `Failed to add label: ${error.message}`,
-              'UNKNOWN'
-            );
+        if (error.response?.status === 404) {
+          throw new ConfluenceError(
+            'Page not found',
+            'PAGE_NOT_FOUND'
+          );
         }
+        
+        console.error('Error adding label:', error.message, error.response?.data);
+        
+        // Handle duplicate label
+        if (error.response?.data?.message?.includes('already has the label')) {
+          throw new ConfluenceError(
+            `Label "${label}" already exists on this page`,
+            'LABEL_EXISTS'
+          );
+        }
+        
+        throw new ConfluenceError(
+          `Failed to add label: ${error.message}`,
+          'UNKNOWN'
+        );
       }
       throw error;
     }
@@ -354,27 +420,33 @@ export class ConfluenceClient {
 
   async removeConfluenceLabel(pageId: string, label: string): Promise<void> {
     try {
-      await this.v2Client.delete(`/pages/${pageId}/labels/${label}`);
+      await this.client.delete(`/content/${pageId}/label`, {
+        params: {
+          name: label
+        }
+      });
     } catch (error) {
       if (axios.isAxiosError(error)) {
-        switch (error.response?.status) {
-          case 403:
+        if (error.response?.status === 404) {
+          // Either page or label not found
+          const data = error.response.data;
+          if (data?.message?.includes('label')) {
             throw new ConfluenceError(
-              'Insufficient permissions to remove labels',
-              'PERMISSION_DENIED'
+              `Label "${label}" not found on page`,
+              'LABEL_NOT_FOUND'
             );
-          case 404:
+          } else {
             throw new ConfluenceError(
-              'Page or label not found',
+              'Page not found',
               'PAGE_NOT_FOUND'
             );
-          default:
-            console.error('Error removing label:', error.response?.data);
-            throw new ConfluenceError(
-              `Failed to remove label: ${error.message}`,
-              'UNKNOWN'
-            );
+          }
         }
+        
+        throw new ConfluenceError(
+          `Failed to remove label: ${error.message}`,
+          'UNKNOWN'
+        );
       }
       throw error;
     }

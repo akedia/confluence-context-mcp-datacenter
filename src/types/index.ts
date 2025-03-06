@@ -86,6 +86,7 @@ export interface PaginatedResponse<T> {
     next?: string;
     base: string;
   };
+  size?: number;
 }
 
 export interface SimplifiedPage {
@@ -103,7 +104,7 @@ export interface SimplifiedPage {
 export class ConfluenceError extends Error {
   constructor(
     message: string,
-    public readonly code: 'PAGE_NOT_FOUND' | 'MULTIPLE_MATCHES' | 'INSUFFICIENT_PERMISSIONS' | 'EMPTY_CONTENT' | 'UNKNOWN' | 'SEARCH_FAILED' | 'LABEL_EXISTS' | 'INVALID_LABEL' | 'PERMISSION_DENIED'
+    public readonly code: 'PAGE_NOT_FOUND' | 'MULTIPLE_MATCHES' | 'INSUFFICIENT_PERMISSIONS' | 'EMPTY_CONTENT' | 'UNKNOWN' | 'SEARCH_FAILED' | 'LABEL_EXISTS' | 'INVALID_LABEL' | 'PERMISSION_DENIED' | 'LABEL_NOT_FOUND'
   ) {
     super(message);
     this.name = 'ConfluenceError';

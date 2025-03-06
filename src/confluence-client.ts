@@ -16,7 +16,7 @@ export class ConfluenceClient {
   constructor(auth: ConfluenceAuth) {
     this.domain = auth.domain;
     this.client = axios.create({
-      baseURL: `https://${auth.domain}/wiki/api/v2`,
+      baseURL: `https://${auth.domain}/rest/api`,
       auth: {
         username: auth.email,
         password: auth.apiToken

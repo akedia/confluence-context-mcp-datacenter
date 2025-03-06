@@ -26,9 +26,13 @@
     "@atlaskit/editor-json-transformer": "^8.21.1",
     "@modelcontextprotocol/sdk": "^1.6.0",
     "axios": "^1.7.9",
-    "dotenv": "^16.4.7"
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^5.0.1"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
     "@types/jest": "^29.5.12",
     "@types/node": "^20.11.24",
     "@typescript-eslint/eslint-plugin": "^5.62.0",

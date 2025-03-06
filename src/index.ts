@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import express, { Request, Response } from "express";
+import cors from "cors";
+import { config as dotenvConfig } from "dotenv";
 import {
   CallToolRequestSchema,
   ErrorCode,
@@ -28,6 +32,9 @@ import {
 import { handleGetConfluenceSpace, handleListConfluenceSpaces } from "./handlers/space-handlers.js";
 import { toolSchemas } from "./schemas/tool-schemas.js";
 
+// 加载环境变量
+dotenvConfig();
+
 // Required environment variables
 const requiredEnvVars = [
   "CONFLUENCE_DOMAIN",
@@ -45,6 +52,7 @@ for (const envVar of requiredEnvVars) {
 class ConfluenceServer {
   private server!: Server;
   private confluenceClient!: ConfluenceClient;
+  private transport: SSEServerTransport | null = null;
 
   private async initialize() {
     console.error("Loading tool schemas...");
@@ -259,9 +267,87 @@ class ConfluenceServer {
   }
 
   async run() {
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
-    console.error("Confluence Cloud MCP server running on stdio");
+    console.error("Starting Confluence MCP server...");
+    
+    try {
+      // Create Express application
+      const app = express();
+      
+      console.error("Express app created");
+      
+      // Add CORS support
+      app.use(cors());
+      
+      console.error("CORS middleware added");
+      
+      // Set up SSE endpoint
+      app.get("/sse", async (req: Request, res: Response) => {
+        console.error("New SSE connection established");
+        this.transport = new SSEServerTransport("/messages", res);
+        await this.server.connect(this.transport);
+      });
+      
+      // Set up messages endpoint
+      app.post("/messages", async (req: Request, res: Response) => {
+        console.error("Received message");
+        if (this.transport) {
+          try {
+            await this.transport.handlePostMessage(req, res);
+            console.error("Message handled successfully");
+          } catch (error) {
+            console.error("Error handling message:", error);
+            res.status(500).json({ error: "Internal server error" });
+          }
+        } else {
+          console.error("No active SSE connection");
+          res.status(400).json({ error: "No active SSE connection" });
+        }
+      });
+      
+      // Default route to display info
+      app.get("/", (req: Request, res: Response) => {
+        console.error("Homepage request received");
+        res.send(`
+          <html>
+            <head><title>Confluence MCP Server</title></head>
+            <body>
+              <h1>Confluence MCP Server</h1>
+              <p>Server is running. Use the following endpoints:</p>
+              <ul>
+                <li>SSE URL: <code>/sse</code></li>
+                <li>Messages endpoint: <code>/messages</code></li>
+              </ul>
+            </body>
+          </html>
+        `);
+      });
+      
+      // Start the server
+      const PORT = process.env.PORT || 3001;
+      const server = app.listen(PORT, () => {
+        console.error(`Confluence MCP server running at http://localhost:${PORT}`);
+        console.error(`SSE URL: http://localhost:${PORT}/sse`);
+        console.error(`Messages endpoint: http://localhost:${PORT}/messages`);
+      });
+      
+      // Handle server errors
+      server.on('error', (error: any) => {
+        console.error('Server error:', error);
+        if (error.code === 'EADDRINUSE') {
+          console.error(`Port ${PORT} is already in use. Try a different port.`);
+        }
+      });
+      
+      // Also support stdio for backward compatibility
+      if (process.env.USE_STDIO === "true") {
+        const stdioTransport = new StdioServerTransport();
+        await this.server.connect(stdioTransport);
+        console.error("Confluence MCP server also running on stdio");
+      }
+    } catch (error) {
+      console.error("Failed to start server:", error);
+      throw error;
+    }
   }
 }
 
